@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Set up a fresh clone: install tools and the pre-commit hook"
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+require_claude
+cd "$ROOT"
+
+mise install
+# Git does not version hooks, so each clone installs this one. Skip it when it is already in place.
+hook="$(git rev-parse --git-path hooks/pre-commit)"
+if [ "$(cat "$hook" 2>/dev/null)" = "$(mise generate git-pre-commit --task "check --staged")" ]; then
+  echo "pre-commit hook already installed"
+else
+  mise generate git-pre-commit --write --task "check --staged"
+fi
+echo "✔ ready. Create a plugin with: mise run plugin:new <name> --kind skill|mod"

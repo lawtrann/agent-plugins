@@ -16,16 +16,16 @@ Install a plugin:
 
   ```sh
   mise trust
-  mise install
-  mise generate git-pre-commit --write --task "check --staged"
+  mise run init
   ```
 
-  The last line installs the pre-commit hook. Git does not version hooks, so each clone needs it once.
+  `init` installs the tools and the pre-commit hook. Git does not version hooks, so each clone runs `init` once.
 
 ## Tasks
 
 | Task | What it does |
 | --- | --- |
+| `mise run init` | Once per clone: installs the tools and the pre-commit hook. Safe to run again. |
 | `mise run plugin:new <name> --kind skill\|mod [--description <text>]` | Copies a template to `./<name>/`, adds the entry to `marketplace.json`, then runs `check <name>`. |
 | `mise run check [plugin] [--staged]` | `claude plugin validate --strict` on the marketplace and on each selected plugin; checks entry name = `plugin.json` name = directory; checks the plugin kind; runs `claude plugin test` for a mod. |
 | `mise run plugin:bump <plugin> patch\|minor\|major` | Needs a clean tree. Runs `claude plugin eval` (report stays local), then increments `version` in `plugin.json`. It does not run `check` and does not commit. |
