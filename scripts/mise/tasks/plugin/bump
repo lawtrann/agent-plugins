@@ -29,7 +29,7 @@ fi
 # Suggest a level from the commits since the last tag (all commits when there is no tag).
 if [ -n "$tag" ]; then range="$tag..HEAD"; else range="HEAD"; fi
 echo "Changes in $dir since ${tag:-the start}:"
-git log --no-merges --format='  %h %s' "$range" -- "$dir"
+git --no-pager log --no-merges --format='  %h %s' "$range" -- "$dir"
 breaking=false
 feat=false
 for c in $(git rev-list --no-merges "$range" -- "$dir"); do
