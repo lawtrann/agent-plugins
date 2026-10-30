@@ -1,0 +1,8 @@
+{
+  "name": "query-db",
+  "version": "0.0.0",
+  "description": "Connect to a Cloud SQL PostgreSQL database through cloud-sql-proxy with IAM auth, using named targets from a local config",
+  "author": { "name": "Vinh Tran" },
+  "repository": "https://github.com/lawtrann/agent-plugins",
+  "license": "MIT"
+}
