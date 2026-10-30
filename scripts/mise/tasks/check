@@ -53,7 +53,7 @@ for dir in $selected; do
     continue
   fi
 
-  claude plugin validate --strict "$dir" </dev/null || fail "$dir: claude plugin validate --strict"
+  claude plugin validate --strict "./$dir" </dev/null || fail "$dir: claude plugin validate --strict"
 
   # Entry name == manifest name == directory name. validate does not check this.
   entry="$(jq -r --arg s "./$dir" '.plugins[] | select(.source == $s) | .name' "$MARKETPLACE")"
@@ -72,7 +72,7 @@ for dir in $selected; do
         fail "$dir: a skill plugin has exactly one skill, skills/$manifest/. Found: $(echo $skills)"
       ;;
     mod)
-      claude plugin test "$dir" </dev/null || fail "$dir: claude plugin test"
+      claude plugin test "./$dir" </dev/null || fail "$dir: claude plugin test"
       ;;
   esac
 done

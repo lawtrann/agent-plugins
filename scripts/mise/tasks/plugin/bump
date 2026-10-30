@@ -71,11 +71,11 @@ kind="$(plugin_kind "$dir")" || exit 1
 case "$kind" in
   skill)
     echo "▸ claude plugin eval $dir"
-    claude plugin eval "$dir" --no-publish || die "the evals failed. Nothing was committed."
+    claude plugin eval "./$dir" --no-publish || die "the evals failed. Nothing was committed."
     ;;
   mod)
     echo "▸ claude plugin test $dir"
-    claude plugin test "$dir" || die "the tests failed. Nothing was committed."
+    claude plugin test "./$dir" || die "the tests failed. Nothing was committed."
     ;;
 esac
 [ -z "$(git status --porcelain)" ] || die "the verify step changed the working tree. Nothing was committed."
