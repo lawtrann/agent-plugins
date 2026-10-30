@@ -4,5 +4,11 @@
     "name": "Vinh Tran"
   },
   "description": "Claude Code plugins for the team: skills and mods.",
-  "plugins": []
+  "plugins": [
+    {
+      "name": "query-db",
+      "source": "./query-db",
+      "description": "Connect to a Cloud SQL PostgreSQL database through cloud-sql-proxy with IAM auth, using named targets from a local config"
+    }
+  ]
 }

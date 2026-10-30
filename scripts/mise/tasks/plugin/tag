@@ -19,5 +19,5 @@ git merge-base --is-ancestor HEAD "origin/$RELEASE_BRANCH" ||
   die "HEAD is not on origin/$RELEASE_BRANCH. Pull, or merge your PR first."
 
 # claude plugin tag refuses a dirty tree and an existing tag by itself.
-claude plugin tag "$dir" --dry-run
-claude plugin tag "$dir" --push
+claude plugin tag "./$dir" --dry-run
+claude plugin tag "./$dir" --push

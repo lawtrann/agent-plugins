@@ -29,7 +29,7 @@ fi
 # Suggest a level from the commits since the last tag (all commits when there is no tag).
 if [ -n "$tag" ]; then range="$tag..HEAD"; else range="HEAD"; fi
 echo "Changes in $dir since ${tag:-the start}:"
-git log --no-merges --format='  %h %s' "$range" -- "$dir"
+git --no-pager log --no-merges --format='  %h %s' "$range" -- "$dir"
 breaking=false
 feat=false
 for c in $(git rev-list --no-merges "$range" -- "$dir"); do
@@ -71,11 +71,11 @@ kind="$(plugin_kind "$dir")" || exit 1
 case "$kind" in
   skill)
     echo "▸ claude plugin eval $dir"
-    claude plugin eval "$dir" --no-publish || die "the evals failed. Nothing was committed."
+    claude plugin eval "./$dir" --no-publish || die "the evals failed. Nothing was committed."
     ;;
   mod)
     echo "▸ claude plugin test $dir"
-    claude plugin test "$dir" || die "the tests failed. Nothing was committed."
+    claude plugin test "./$dir" || die "the tests failed. Nothing was committed."
     ;;
 esac
 [ -z "$(git status --porcelain)" ] || die "the verify step changed the working tree. Nothing was committed."
