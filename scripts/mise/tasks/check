@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#MISE description="Validate the marketplace and its plugins (the pre-commit hook runs this with --staged)"
+#USAGE arg "[plugin]" help="Check only this plugin (default: all plugins)"
+#USAGE flag "--staged" help="Check only the plugins that have staged files"
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+require_claude
+cd "$ROOT"
+
+failed=0
+fail() {
+  echo "✘ $*" >&2
+  failed=1
+}
+
+# The marketplace. --strict fails on an empty plugin list, so validate an empty marketplace without it:
+# errors (such as a reserved name) still fail.
+echo "▸ marketplace"
+if jq -e '.plugins | length > 0' "$MARKETPLACE" >/dev/null; then
+  claude plugin validate --strict . || fail "marketplace: claude plugin validate --strict ."
+else
+  claude plugin validate . || fail "marketplace: claude plugin validate ."
+fi
+
+# Select the plugins.
+if [ -n "${usage_plugin:-}" ]; then
+  jq -e --arg n "$usage_plugin" 'any(.plugins[]; .name == $n)' "$MARKETPLACE" >/dev/null ||
+    die "'$usage_plugin' is not an entry in marketplace.json."
+  selected="$(jq -r --arg n "$usage_plugin" '.plugins[] | select(.name == $n) | .source | ltrimstr("./")' "$MARKETPLACE")"
+elif [ "${usage_staged:-false}" = "true" ]; then
+  # Only plugins with staged files; none staged means none checked.
+  staged_tops="$(git diff --cached --name-only | cut -d/ -f1 | sort -u)"
+  selected="$(comm -12 <(plugin_dirs | sort -u) <(printf '%s\n' "$staged_tops" | sort -u))"
+else
+  selected="$(plugin_dirs)"
+fi
+
+for dir in $selected; do
+  echo "▸ $dir"
+  if [ ! -f "$dir/.claude-plugin/plugin.json" ]; then
+    fail "$dir: no .claude-plugin/plugin.json"
+    continue
+  fi
+
+  claude plugin validate --strict "$dir" || fail "$dir: claude plugin validate --strict"
+
+  # Entry name == manifest name == directory name. validate does not check this.
+  entry="$(jq -r --arg s "./$dir" '.plugins[] | select(.source == $s) | .name' "$MARKETPLACE")"
+  manifest="$(jq -r .name "$dir/.claude-plugin/plugin.json")"
+  [ "$entry" = "$manifest" ] || fail "$dir: marketplace entry name '$entry' != plugin.json name '$manifest'"
+  [ "$entry" = "$dir" ] || fail "$dir: source must be './$entry' (the entry name), not './$dir'"
+
+  if ! kind="$(plugin_kind "$dir")"; then
+    fail "$dir: kind"
+    continue
+  fi
+  case "$kind" in
+    skill)
+      skills="$(find "$dir/skills" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)"
+      [ "$skills" = "$manifest" ] ||
+        fail "$dir: a skill plugin has exactly one skill, skills/$manifest/. Found: $(echo $skills)"
+      ;;
+    mod)
+      claude plugin test "$dir" || fail "$dir: claude plugin test"
+      ;;
+  esac
+done
+
+if [ "$failed" -ne 0 ]; then
+  echo "✘ check failed" >&2
+  exit 1
+fi
+echo "✔ check passed"

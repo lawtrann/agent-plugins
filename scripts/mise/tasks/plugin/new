@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#MISE description="Create a plugin from a template and add it to marketplace.json"
+#USAGE arg "<name>" help="Plugin name (kebab-case). A skill plugin's skill gets the same name."
+#USAGE flag "--kind <kind>" required=#true help="skill: exactly one skill. mod: a TypeScript hooks module." {
+#USAGE   choices "skill" "mod"
+#USAGE }
+#USAGE flag "--description <text>" help="One-line description for plugin.json, marketplace.json and the README"
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+
+name="$usage_name"
+kind="$usage_kind"
+description="${usage_description:-TODO: describe $name}"
+
+validate_name "$name"
+[[ "$description" != *$'\n'* ]] || die "--description must be one line."
+
+author="$(git config user.name)" || die "git config user.name is not set."
+origin="$(git remote get-url origin 2>/dev/null)" || die "no 'origin' remote; it gives the repository URL."
+repo="$(sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##' <<<"$origin")"
+marketplace="$(jq -r .name "$MARKETPLACE")"
+
+# Render into a temporary directory first, so a failure leaves nothing at the repo root.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+cp -R "$TEMPLATES/common/." "$TEMPLATES/$kind/." "$tmp/"
+
+# Rename __NAME__ in paths, deepest first.
+find "$tmp" -depth -name '*__NAME__*' | while read -r path; do
+  base="$(basename "$path")"
+  mv "$path" "$(dirname "$path")/${base//__NAME__/$name}"
+done
+
+# Fill in placeholders. Values reach perl through the environment, so no character in them is special.
+# In .json files and SKILL.md (whose description is a double-quoted YAML string) the values are JSON-escaped first.
+json() { jq -rn --arg v "$1" '$v | @json | .[1:-1]'; }
+find "$tmp" -type f | while read -r file; do
+  if [[ "$file" == *.json || "$file" == */SKILL.md ]]; then
+    P_NAME="$(json "$name")" P_DESC="$(json "$description")" P_AUTHOR="$(json "$author")" \
+      P_REPO="$(json "$repo")" P_MARKET="$(json "$marketplace")" \
+      perl -pi -e 's/\{\{name\}\}/$ENV{P_NAME}/g; s/\{\{description\}\}/$ENV{P_DESC}/g; s/\{\{author\}\}/$ENV{P_AUTHOR}/g; s/\{\{repo\}\}/$ENV{P_REPO}/g; s/\{\{marketplace\}\}/$ENV{P_MARKET}/g' "$file"
+  else
+    P_NAME="$name" P_DESC="$description" P_AUTHOR="$author" P_REPO="$repo" P_MARKET="$marketplace" \
+      perl -pi -e 's/\{\{name\}\}/$ENV{P_NAME}/g; s/\{\{description\}\}/$ENV{P_DESC}/g; s/\{\{author\}\}/$ENV{P_AUTHOR}/g; s/\{\{repo\}\}/$ENV{P_REPO}/g; s/\{\{marketplace\}\}/$ENV{P_MARKET}/g' "$file"
+  fi
+done
+
+mv "$tmp" "$ROOT/$name"
+trap - EXIT
+chmod 755 "$ROOT/$name"
+
+jq --arg n "$name" --arg d "$description" \
+  '.plugins = (.plugins + [{name: $n, source: ("./" + $n), description: $d}] | sort_by(.name))' \
+  "$MARKETPLACE" >"$MARKETPLACE.tmp"
+mv "$MARKETPLACE.tmp" "$MARKETPLACE"
+
+echo "Created ./$name ($kind) and added it to marketplace.json."
+mise run check "$name"

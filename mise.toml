@@ -1,0 +1,5 @@
+[tools]
+jq = "1.8.1"
+
+[task_config]
+includes = ["scripts/mise/tasks"]

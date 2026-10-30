@@ -1,0 +1,8 @@
+{
+  "name": "agent-plugins",
+  "owner": {
+    "name": "Vinh Tran"
+  },
+  "description": "Claude Code plugins for the team: skills and mods.",
+  "plugins": []
+}

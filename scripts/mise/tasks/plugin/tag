@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Create and push the release tag <plugin>--v<version>"
+#MISE confirm="Create and push the release tag for {{usage.plugin}}?"
+#USAGE arg "<plugin>" help="Plugin name"
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+require_claude
+cd "$ROOT"
+
+name="$usage_plugin"
+dir="$(jq -r --arg n "$name" '.plugins[] | select(.name == $n) | .source | ltrimstr("./")' "$MARKETPLACE")"
+[ -n "$dir" ] || die "'$name' is not an entry in marketplace.json."
+
+# claude plugin tag refuses a dirty tree and an existing tag by itself.
+claude plugin tag "$dir" --dry-run
+claude plugin tag "$dir" --push
