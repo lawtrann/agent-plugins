@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Lint a commit message against the staged changes (the commit-msg hook runs this)"
+#MISE hide=true
+#USAGE arg "<file>" help="The commit message file that git gives the hook"
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+cd "$ROOT"
+
+msg="$(git stripspace --strip-comments <"$usage_file")"
+subject="$(sed -n 1p <<<"$msg")"
+# git merge writes "Merge ...". release-gate checks the merged commits one by one.
+[[ "$subject" != "Merge "* ]] || exit 0
+
+# The plugins with staged files. A commit without plugin files has no rule.
+touched="$(comm -12 <({ plugin_dirs_at ""; plugin_dirs_at HEAD; } | sort -u) <(git diff --cached --name-only | cut -d/ -f1 | sort -u))"
+[ -n "$touched" ] || exit 0
+[ "$(wc -l <<<"$touched")" -eq 1 ] ||
+  die "one plugin per commit. This commit touches: $(echo $touched). Stage and commit each plugin separately."
+dir="$touched"
+
+lint_subject "$subject" "$dir" || die "commit message refused."
+
+# A changed version makes this a release commit.
+old="$(version_at HEAD "$dir")"
+new="$(version_at "" "$dir")"
+if [ -n "$old" ] && [ "$new" != "$old" ]; then
+  trailer="$(git interpret-trailers --parse <<<"$msg" | sed -n 's/^Verified-Tree: *//p')"
+  check_release HEAD "" "$dir" "$subject" "$trailer" ||
+    die "release commit refused ($dir $old → $new). Make releases with: mise run plugin:bump $dir"
+fi

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#MISE description="Check that every plugin changed in <base>..<head> ends at a verified release (pre-push and CI run this)"
+#USAGE arg "<base>" help="The commit the target branch is at now (40 zeros for a new branch)"
+#USAGE arg "<head>" help="The commit to push or merge"
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+cd "$ROOT"
+
+head="$(git rev-parse -q --verify "$usage_head^{commit}")" || die "$usage_head is not a commit in this clone."
+if [ "$usage_base" = "$ZERO_SHA" ]; then
+  base="" # a new branch: every commit in <head> is new
+  range="$head"
+else
+  git cat-file -e "$usage_base^{commit}" 2>/dev/null || die "$usage_base is not in this clone. Run: git fetch"
+  # The merge base, so a PR whose base branch moved on is judged by its own commits.
+  base="$(git merge-base "$usage_base" "$head")" || die "$usage_base and $head have no common commit."
+  range="$base..$head"
+fi
+
+failed=0
+fail() {
+  echo "✘ $*" >&2
+  failed=1
+}
+
+dirs="$(plugin_dirs_at "$head")"
+if [ -z "$dirs" ]; then
+  echo "✔ release-gate: no plugins"
+  exit 0
+fi
+
+# Every non-merge commit that touches a plugin: one plugin, a Conventional Commit subject,
+# and a changed version only in a release commit.
+for c in $(git rev-list --no-merges --full-history "$range" -- $dirs); do
+  short="$(git rev-parse --short "$c")"
+  touched="$(comm -12 <(sort -u <<<"$dirs") <(git diff-tree --no-commit-id --name-only -r --root "$c" | cut -d/ -f1 | sort -u))"
+  if [ "$(wc -l <<<"$touched")" -gt 1 ]; then
+    fail "$short touches more than one plugin: $(echo $touched)"
+    continue
+  fi
+  lint_subject "$(git log -1 --format=%s "$c")" "$touched" || fail "$short: commit message"
+  old="$(version_at "$c^" "$touched")"
+  if [ -n "$old" ] && [ "$(version_at "$c" "$touched")" != "$old" ]; then
+    is_release_commit "$c" "$touched" || fail "$short changes the version of $touched but is not a valid release commit"
+  fi
+done
+
+# Every plugin that changed ends at a release commit, unchanged since, with a higher version than at the base.
+for dir in $dirs; do
+  [ -z "$base" ] && [ -z "$(plugin_tree "$head" "$dir")" ] && continue
+  [ -n "$base" ] && git diff --quiet "$base" "$head" -- "$dir" && continue
+  echo "▸ $dir"
+  release="$(git rev-list -1 --no-merges "$range" -- "$dir")"
+  if [ -z "$release" ]; then
+    fail "$dir: only a merge changed it. Release it with: mise run plugin:bump $dir"
+    continue
+  fi
+  if ! is_release_commit "$release" "$dir"; then
+    fail "$dir: the last commit that changes it, $(git log -1 --format='%h %s' "$release"), is not a release. Run: mise run plugin:bump $dir"
+    continue
+  fi
+  [ "$(plugin_tree "$head" "$dir")" = "$(plugin_tree "$release" "$dir")" ] ||
+    fail "$dir: differs from its release commit $(git rev-parse --short "$release"). A merge changed it; release again."
+  if [ -n "$base" ]; then
+    old="$(version_at "$base" "$dir")"
+    new="$(version_at "$head" "$dir")"
+    [ -z "$old" ] || semver_gt "$new" "$old" || fail "$dir: version $new is not greater than $old at the base"
+  fi
+done
+
+if [ "$failed" -ne 0 ]; then
+  echo "✘ release-gate failed" >&2
+  exit 1
+fi
+echo "✔ release-gate passed"

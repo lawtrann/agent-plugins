@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Run release-gate for a push to the release branch (the pre-push hook runs this)"
+#MISE hide=true
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
+cd "$ROOT"
+
+# git writes one line per pushed ref on stdin: <local ref> <local sha> <remote ref> <remote sha>.
+while read -r _ local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/$RELEASE_BRANCH" ] || continue
+  [ "$local_sha" != "$ZERO_SHA" ] || continue # a deleted branch
+  echo "▸ push to $RELEASE_BRANCH"
+  mise run release-gate "$remote_sha" "$local_sha" </dev/null
+done

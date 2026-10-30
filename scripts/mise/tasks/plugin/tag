@@ -8,8 +8,15 @@ require_claude
 cd "$ROOT"
 
 name="$usage_plugin"
-dir="$(jq -r --arg n "$name" '.plugins[] | select(.name == $n) | .source | ltrimstr("./")' "$MARKETPLACE")"
+dir="$(plugin_dir "$name")"
 [ -n "$dir" ] || die "'$name' is not an entry in marketplace.json."
+
+# Tag only what the team installs: a commit that is on origin's release branch.
+[ "$(git branch --show-current)" = "$RELEASE_BRANCH" ] ||
+  die "tag on $RELEASE_BRANCH, after the PR is merged: git checkout $RELEASE_BRANCH && git pull"
+git fetch -q origin "$RELEASE_BRANCH"
+git merge-base --is-ancestor HEAD "origin/$RELEASE_BRANCH" ||
+  die "HEAD is not on origin/$RELEASE_BRANCH. Pull, or merge your PR first."
 
 # claude plugin tag refuses a dirty tree and an existing tag by itself.
 claude plugin tag "$dir" --dry-run

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Run a plugin's evals, then bump its version in plugin.json (no check, no commit)"
+#MISE description="Verify a plugin (evals or tests), then commit its release: the version bump with a Verified-Tree trailer"
 #USAGE arg "<plugin>" help="Plugin name"
-#USAGE arg "<level>" help="Which part of the version to increment" {
+#USAGE arg "[level]" help="Override the level that the commits since the last tag suggest" {
 #USAGE   choices "patch" "minor" "major"
 #USAGE }
 set -euo pipefail
@@ -10,30 +10,87 @@ require_claude
 cd "$ROOT"
 
 name="$usage_plugin"
-dir="$(jq -r --arg n "$name" '.plugins[] | select(.name == $n) | .source | ltrimstr("./")' "$MARKETPLACE")"
+dir="$(plugin_dir "$name")"
 [ -n "$dir" ] || die "'$name' is not an entry in marketplace.json."
 manifest="$dir/.claude-plugin/plugin.json"
 
-# A clean tree means the last commit passed the pre-commit check, and the evals run on committed code.
+# The evals run on committed code, and the release commit records that tree.
 [ -z "$(git status --porcelain)" ] || die "the working tree has uncommitted changes. Commit or stash them first."
 
-if [ -d "$dir/evals" ]; then
-  echo "▸ claude plugin eval $dir"
-  claude plugin eval "$dir" --no-publish || die "the evals failed. The version is unchanged."
-else
-  echo "▸ $dir has no evals/; skipping evals."
+tag="$(last_tag "$name")"
+if [ -n "$tag" ] && [ "$(plugin_tree HEAD "$dir")" = "$(plugin_tree "$tag" "$dir")" ]; then
+  die "nothing to release: $dir is unchanged since $tag."
+fi
+last="$(git rev-list -1 --no-merges HEAD -- "$dir")"
+if is_release_commit "$last" "$dir" 2>/dev/null; then
+  die "$(git log -1 --format='%h %s' "$last") already releases the current changes. Push it, open a PR, and run plugin:tag after the merge."
 fi
 
-old="$(jq -r .version "$manifest")"
-new="$(jq -rn --arg v "$old" --arg level "$usage_level" '
-  $v | split(".") | map(tonumber) |
-  if $level == "major" then [.[0] + 1, 0, 0]
-  elif $level == "minor" then [.[0], .[1] + 1, 0]
-  else [.[0], .[1], .[2] + 1] end |
-  map(tostring) | join(".")')"
-jq --arg v "$new" '.version = $v' "$manifest" >"$manifest.tmp"
-mv "$manifest.tmp" "$manifest"
+# Suggest a level from the commits since the last tag (all commits when there is no tag).
+if [ -n "$tag" ]; then range="$tag..HEAD"; else range="HEAD"; fi
+echo "Changes in $dir since ${tag:-the start}:"
+git log --no-merges --format='  %h %s' "$range" -- "$dir"
+breaking=false
+feat=false
+for c in $(git rev-list --no-merges "$range" -- "$dir"); do
+  subject="$(git log -1 --format=%s "$c")"
+  [[ "$subject" =~ ^[a-z]+(\([^\)]*\))?!: ]] && breaking=true
+  git log -1 --format=%b "$c" | grep -qE '^BREAKING[ -]CHANGE:' && breaking=true
+  [[ "$subject" =~ ^feat[\(!:] ]] && feat=true
+done
 
-echo "✔ $name: $old → $new"
-echo "Next: git commit -am \"chore($name): v$new\"   (the pre-commit hook runs check)"
-echo "Then: mise run plugin:tag $name"
+old="$(jq -r .version "$manifest")"
+IFS=. read -r major minor patch <<<"$old"
+if [ "$old" = "0.0.0" ]; then
+  suggested=minor # the first release is 0.1.0
+elif [ "$major" -eq 0 ]; then
+  if $breaking; then suggested=minor; else suggested=patch; fi
+elif $breaking; then
+  suggested=major
+elif $feat; then
+  suggested=minor
+else
+  suggested=patch
+fi
+level="${usage_level:-$suggested}"
+case "$level" in
+  major) new="$((major + 1)).0.0" ;;
+  minor) new="$major.$((minor + 1)).0" ;;
+  patch) new="$major.$minor.$((patch + 1))" ;;
+esac
+echo "Suggested level: $suggested (breaking: $breaking, feat: $feat)"
+
+if [ -z "${usage_level:-}" ]; then
+  { true </dev/tty; } 2>/dev/null || die "no terminal to confirm. Pass the level: mise run plugin:bump $name $suggested"
+  read -r -p "Release $name $old → $new? [y/N] " answer </dev/tty
+  [[ "$answer" =~ ^[yY] ]] || die "cancelled."
+fi
+
+tree="$(plugin_tree HEAD "$dir")"
+kind="$(plugin_kind "$dir")" || exit 1
+case "$kind" in
+  skill)
+    echo "▸ claude plugin eval $dir"
+    claude plugin eval "$dir" --no-publish || die "the evals failed. Nothing was committed."
+    ;;
+  mod)
+    echo "▸ claude plugin test $dir"
+    claude plugin test "$dir" || die "the tests failed. Nothing was committed."
+    ;;
+esac
+[ -z "$(git status --porcelain)" ] || die "the verify step changed the working tree. Nothing was committed."
+
+# Change only the "version" value, so the diff is one line.
+NEW="$new" perl -pi -e '$done ||= s/("version"\s*:\s*")[^"]*"/$1$ENV{NEW}"/' "$manifest"
+[ "$(jq -r .version "$manifest")" = "$new" ] || die "could not set version in $manifest."
+
+git add "$manifest"
+if ! git commit -m "chore($name): release v$new" --trailer "Verified-Tree: $tree"; then
+  git restore --staged --worktree "$manifest"
+  die "the release commit failed. The version is unchanged."
+fi
+
+echo "✔ $name $old → $new, verified tree $tree"
+echo "Next: git push -u origin $(git branch --show-current)"
+echo "      gh pr create --base $RELEASE_BRANCH   (merge with a merge commit, not squash)"
+echo "Then, on $RELEASE_BRANCH after the merge: mise run plugin:tag $name"

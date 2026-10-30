@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 #MISE description="Validate the marketplace and its plugins (the pre-commit hook runs this with --staged)"
 #USAGE arg "[plugin]" help="Check only this plugin (default: all plugins)"
-#USAGE flag "--staged" help="Check only the plugins that have staged files"
+#USAGE flag "--staged" help="Check the staged content (not the working tree) of the plugins that have staged files"
 set -euo pipefail
 source "$(git rev-parse --show-toplevel)/scripts/mise/lib.sh"
 require_claude
 cd "$ROOT"
+
+# With --staged, check what the commit will contain: export the index to a temporary directory.
+# Every check below then runs there, on relative paths.
+work="$ROOT"
+if [ "${usage_staged:-false}" = "true" ]; then
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  git checkout-index -a --prefix="$work/"
+  MARKETPLACE="$work/.claude-plugin/marketplace.json"
+fi
 
 failed=0
 fail() {
@@ -17,9 +27,9 @@ fail() {
 # errors (such as a reserved name) still fail.
 echo "▸ marketplace"
 if jq -e '.plugins | length > 0' "$MARKETPLACE" >/dev/null; then
-  claude plugin validate --strict . || fail "marketplace: claude plugin validate --strict ."
+  claude plugin validate --strict "$work" </dev/null || fail "marketplace: claude plugin validate --strict ."
 else
-  claude plugin validate . || fail "marketplace: claude plugin validate ."
+  claude plugin validate "$work" </dev/null || fail "marketplace: claude plugin validate ."
 fi
 
 # Select the plugins.
@@ -34,6 +44,7 @@ elif [ "${usage_staged:-false}" = "true" ]; then
 else
   selected="$(plugin_dirs)"
 fi
+cd "$work"
 
 for dir in $selected; do
   echo "▸ $dir"
@@ -42,7 +53,7 @@ for dir in $selected; do
     continue
   fi
 
-  claude plugin validate --strict "$dir" || fail "$dir: claude plugin validate --strict"
+  claude plugin validate --strict "$dir" </dev/null || fail "$dir: claude plugin validate --strict"
 
   # Entry name == manifest name == directory name. validate does not check this.
   entry="$(jq -r --arg s "./$dir" '.plugins[] | select(.source == $s) | .name' "$MARKETPLACE")"
@@ -61,7 +72,7 @@ for dir in $selected; do
         fail "$dir: a skill plugin has exactly one skill, skills/$manifest/. Found: $(echo $skills)"
       ;;
     mod)
-      claude plugin test "$dir" || fail "$dir: claude plugin test"
+      claude plugin test "$dir" </dev/null || fail "$dir: claude plugin test"
       ;;
   esac
 done
